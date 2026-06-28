@@ -391,7 +391,7 @@ pub(crate) fn lower_module_decl(
                             // so JSX in this module lowers to
                             // `<local>.createElement(...)` instead of Perry's
                             // eager `js_jsx` adapter (see jsx.rs).
-                            if source == "react" {
+                            if source == "react" && !whole_decl_type_only {
                                 ctx.react_default_import_local = Some(local.clone());
                             }
                         }
@@ -428,7 +428,7 @@ pub(crate) fn lower_module_decl(
                             // React imports; Perry's native JSX adapter calls
                             // function components immediately and therefore runs
                             // hooks outside the reconciler.
-                            if source == "react" {
+                            if source == "react" && !whole_decl_type_only {
                                 ctx.react_default_import_local = Some(local.clone());
                             }
                             // Remember the source so a later bare `export { local }`

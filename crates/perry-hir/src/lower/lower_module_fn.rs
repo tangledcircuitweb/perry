@@ -34,7 +34,7 @@ fn should_enable_react_automatic_jsx(name: &str, ast_module: &ast::Module) -> bo
             continue;
         };
         let source = import.src.value.to_string_lossy().to_string();
-        if source == "react" {
+        if source == "react" && import_has_runtime_binding(import) {
             has_explicit_react_import = true;
         }
         if source.starts_with("@tanstack/react-")
@@ -52,6 +52,16 @@ fn should_enable_react_automatic_jsx(name: &str, ast_module: &ast::Module) -> bo
     has_react_ecosystem_import
         || name.contains("node_modules/@tanstack/react-")
         || name.contains("node_modules/@tanstack/react-router/")
+}
+
+fn import_has_runtime_binding(import: &ast::ImportDecl) -> bool {
+    if import.type_only {
+        return false;
+    }
+    import.specifiers.iter().any(|spec| match spec {
+        ast::ImportSpecifier::Named(named) => !named.is_type_only,
+        ast::ImportSpecifier::Default(_) | ast::ImportSpecifier::Namespace(_) => true,
+    })
 }
 
 fn enable_react_automatic_jsx(module: &mut Module, ctx: &mut LoweringContext) {

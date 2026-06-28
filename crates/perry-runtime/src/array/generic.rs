@@ -639,8 +639,42 @@ impl Drop for ThisGuard {
 // `O` the *original* receiver value; `this_arg` binds the callback's `this`.
 // ---------------------------------------------------------------------------
 
+fn raw_collection_ptr_from_value(value: f64) -> usize {
+    let bits = value.to_bits();
+    let jsval = JSValue::from_bits(bits);
+    if jsval.is_pointer() {
+        (bits & 0x0000_FFFF_FFFF_FFFF) as usize
+    } else if !value.is_nan()
+        && crate::value::addr_class::is_above_handle_band(bits as usize)
+        && (bits >> 48) == 0
+    {
+        bits as usize
+    } else {
+        0
+    }
+}
+
+fn try_collection_for_each(recv: f64, cb: f64, this_arg: f64) -> bool {
+    let ptr = raw_collection_ptr_from_value(recv);
+    if ptr < 0x10000 {
+        return false;
+    }
+    if crate::map::is_registered_map(ptr) {
+        crate::map::js_map_foreach(ptr as *const crate::map::MapHeader, cb, this_arg);
+        return true;
+    }
+    if crate::set::is_registered_set(ptr) {
+        crate::set::js_set_foreach(ptr as *const crate::set::SetHeader, cb, this_arg);
+        return true;
+    }
+    false
+}
+
 #[no_mangle]
 pub extern "C" fn js_arraylike_forEach(recv: f64, cb: f64, this_arg: f64) -> f64 {
+    if try_collection_for_each(recv, cb, this_arg) {
+        return undef();
+    }
     let recv = to_object(recv);
     // Spec order: LengthOfArrayLike(O) is read *before* the IsCallable(cb)
     // check (ECMA-262 §23.1.3.*), so a `length` getter fires even when the

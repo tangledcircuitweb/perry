@@ -367,9 +367,10 @@ pub unsafe extern "C" fn js_transform_stream_subclass_init(
 }
 
 /// Read every queued chunk into a Vec<u8>, draining the stream. Used by
-/// `new Response(stream)` / `new Request(url, { body: stream })` — we
-/// drain the buffered chunks at construction time so the resulting
-/// Response.body bytes match what a real serializer would produce.
+/// `new Request(url, { body: stream })` and eager Response body consumption
+/// paths. `Response.body` itself preserves live streams lazily; this helper is
+/// intentionally non-blocking so it does not wait forever on long-lived SSR
+/// streams.
 #[doc(hidden)]
 pub fn drain_readable_into_bytes(stream_id: usize) -> Vec<u8> {
     let mut out = Vec::new();

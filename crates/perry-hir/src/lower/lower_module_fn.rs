@@ -14,7 +14,9 @@ use swc_ecma_ast as ast;
 
 use super::*;
 use crate::ir::*;
-use crate::lower_types::{infer_hoisted_text_codec_var_type, require_literal_specifier};
+use crate::lower_types::hoisted_text_codec::{
+    infer_hoisted_text_codec_var_type, require_literal_specifier,
+};
 
 fn module_has_strict_mode(ast_module: &ast::Module) -> bool {
     for item in &ast_module.body {

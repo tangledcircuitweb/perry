@@ -18,6 +18,64 @@ use crate::lower_types::hoisted_text_codec::{
     infer_hoisted_text_codec_var_type, require_literal_specifier,
 };
 
+fn should_enable_react_automatic_jsx(name: &str, ast_module: &ast::Module) -> bool {
+    let is_jsx_source = name.ends_with(".tsx")
+        || name.ends_with(".jsx")
+        || name.contains(".tsx?")
+        || name.contains(".jsx?");
+    if !is_jsx_source {
+        return false;
+    }
+
+    let mut has_explicit_react_import = false;
+    let mut has_react_ecosystem_import = false;
+    for item in &ast_module.body {
+        let ast::ModuleItem::ModuleDecl(ast::ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        let source = import.src.value.to_string_lossy().to_string();
+        if source == "react" {
+            has_explicit_react_import = true;
+        }
+        if source.starts_with("@tanstack/react-")
+            || source == "@tanstack/react-router"
+            || source == "react/jsx-runtime"
+        {
+            has_react_ecosystem_import = true;
+        }
+    }
+
+    if has_explicit_react_import {
+        return false;
+    }
+
+    has_react_ecosystem_import
+        || name.contains("node_modules/@tanstack/react-")
+        || name.contains("node_modules/@tanstack/react-router/")
+}
+
+fn enable_react_automatic_jsx(module: &mut Module, ctx: &mut LoweringContext) {
+    const LOCAL: &str = "__perry_react_auto";
+    let local = LOCAL.to_string();
+    ctx.register_imported_func(local.clone(), local.clone());
+    ctx.namespace_import_locals.insert(local.clone());
+    ctx.namespace_import_sources
+        .insert(local.clone(), "react".to_string());
+    ctx.react_default_import_local = Some(local.clone());
+    module.imports.push(Import {
+        source: "react".to_string(),
+        specifiers: vec![ImportSpecifier::Namespace { local }],
+        is_native: false,
+        module_kind: ModuleKind::NativeCompiled,
+        resolved_path: None,
+        type_only: false,
+        is_dynamic: false,
+        is_dynamic_target: false,
+        is_deferred_require: false,
+        is_adopted_require: false,
+    });
+}
+
 fn module_has_strict_mode(ast_module: &ast::Module) -> bool {
     for item in &ast_module.body {
         match item {
@@ -358,6 +416,9 @@ pub fn lower_module_full(
         ctx.seed_imported_class_accessors(seed);
     }
     let mut module = Module::new(name);
+    if should_enable_react_automatic_jsx(name, ast_module) {
+        enable_react_automatic_jsx(&mut module, &mut ctx);
+    }
 
     // Pre-scan for `new Function` / `Function(...)` constant-argument
     // resolution: single-assignment module vars, `toString`-bearing object

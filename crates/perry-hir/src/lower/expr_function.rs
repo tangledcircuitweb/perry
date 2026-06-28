@@ -738,6 +738,7 @@ fn lower_fn_expr_anon(ctx: &mut LoweringContext, fn_expr: &ast::FnExpr) -> Resul
     // #4950: undefined-initialised `Stmt::Let`s for `var`s found nested in
     // compound statements — prepended to the lowered body below.
     let mut nested_var_prologue: Vec<Stmt> = Vec::new();
+    let mut top_level_var_prologue: Vec<Stmt> = Vec::new();
     if let Some(ref block) = fn_expr.function.body {
         // Issue #838 followup (b): pre-register top-level `var` decls in
         // this function body BEFORE lowering any statement. dayjs's
@@ -805,7 +806,14 @@ fn lower_fn_expr_anon(ctx: &mut LoweringContext, fn_expr: &ast::FnExpr) -> Resul
                                 .lookup_index_in_scope(&name, outer_locals_len)
                                 .is_some();
                             if !already_in_scope {
-                                let id = ctx.define_local(name, ty);
+                                let id = ctx.define_local(name.clone(), ty.clone());
+                                top_level_var_prologue.push(Stmt::Let {
+                                    id,
+                                    name,
+                                    ty,
+                                    mutable: true,
+                                    init: Some(Expr::Undefined),
+                                });
                                 // Mark as hoisted so closures created
                                 // before the var's init expression see
                                 // it through a box (mutable capture),
@@ -1116,8 +1124,13 @@ fn lower_fn_expr_anon(ctx: &mut LoweringContext, fn_expr: &ast::FnExpr) -> Resul
                     _ => exec_stmts.extend(lowered),
                 }
             }
-            let mut combined: Vec<Stmt> =
-                Vec::with_capacity(nested_var_prologue.len() + func_decls.len() + exec_stmts.len());
+            let mut combined: Vec<Stmt> = Vec::with_capacity(
+                top_level_var_prologue.len()
+                    + nested_var_prologue.len()
+                    + func_decls.len()
+                    + exec_stmts.len(),
+            );
+            combined.extend(std::mem::take(&mut top_level_var_prologue));
             // Nested-var undefined slots first so every later read/write —
             // including from hoisted function-declaration closures — sees
             // initialised storage (#4950).

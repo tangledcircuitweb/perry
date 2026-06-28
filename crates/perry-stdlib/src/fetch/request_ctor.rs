@@ -47,7 +47,9 @@ pub unsafe extern "C" fn js_request_new(
     // typed-array/buffer registries first and copy the real bytes verbatim; a
     // genuine string body falls through to the lossless StringHeader read so its
     // UTF-8 bytes are preserved.
-    let body: Option<Vec<u8>> = dispatch::body_addr_buffer_bytes(body_ptr as usize)
+    let body: Option<Vec<u8>> = take_pending_fetch_body_stream_id()
+        .map(crate::streams::drain_readable_into_bytes)
+        .or_else(|| dispatch::body_addr_buffer_bytes(body_ptr as usize))
         .or_else(|| dispatch::body_bytes_from_header(body_ptr));
     // GET/HEAD requests may not carry a body (WHATWG fetch). Refs #2643.
     if body.is_some() && (method == "GET" || method == "HEAD") {

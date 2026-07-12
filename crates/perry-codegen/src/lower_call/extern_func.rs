@@ -1045,6 +1045,42 @@ pub(super) fn lower_manifest_param(
     }
 }
 
+/// Issue #6087 — may the `perry/system` | `perry/updater` | `perry/background`
+/// dispatch table claim a call to `name`?
+///
+/// Those three tables are keyed by bare TypeScript name (`takeScreenshot`,
+/// `openURL`, `getLocale`, `preferencesGet`, `hapticPlay`, `schedule`, …) and
+/// used to be consulted on the name alone. But a function the user *imported
+/// from their own module* lowers to exactly the same `Expr::ExternFuncRef {
+/// name }` as a `perry/system` import does, so any user function whose name
+/// collided with one of those ~60 rows was hijacked into the native table:
+///
+/// * arity differs from the native row → `lower_perry_ui_table_call` dropped
+///   the call on the floor (silent miscompile — the reported symptom);
+/// * arity happens to match → the program links against an undefined
+///   `perry_system_*` symbol even though it imports nothing native.
+///
+/// `imported_class_sources` maps every named/default import binding in *this*
+/// module to the specifier it was imported from, which answers the question
+/// exactly: a binding that came from anywhere other than `module` can never be
+/// the native builtin, so the table must not claim it. The cross-module inliner
+/// keeps this sound — when it moves a body containing an `ExternFuncRef` into
+/// another module it also adds the matching `Import` to the destination's
+/// `hir.imports` (see `inline::cross_module`), which is the same table this map
+/// is built from.
+///
+/// A name with *no* import binding in this module (ambient `declare`s,
+/// synthesized extern refs) has no import source to contradict the table, so it
+/// keeps the historical name-only behaviour. Note this also means a `perry/*`
+/// import that never reaches `hir.imports` still dispatches as before — the
+/// gate can only ever *reject* a name that demonstrably came from elsewhere.
+fn callee_is_from_perry_module(ctx: &FnCtx<'_>, name: &str, module: &str) -> bool {
+    match ctx.imported_class_sources.get(name) {
+        Some(source) => source == module,
+        None => true,
+    }
+}
+
 pub fn try_lower_extern_func_call(
     ctx: &mut FnCtx<'_>,
     callee: &Expr,
@@ -1427,21 +1463,30 @@ pub fn try_lower_extern_func_call(
     // keychainSave, etc.) to their perry_system_* / perry_* C symbols.
     // These arrive as ExternFuncRef because perry/system imports aren't
     // lowered to NativeMethodCall in the HIR.
-    if let Some(sig) = perry_system_table_lookup(name) {
-        return Ok(Some(lower_perry_ui_table_call(ctx, sig, args)?));
+    //
+    // Issue #6087: gated on the *import source*, not the bare name — see
+    // `callee_is_from_perry_module`.
+    if callee_is_from_perry_module(ctx, name, "perry/system") {
+        if let Some(sig) = perry_system_table_lookup(name) {
+            return Ok(Some(lower_perry_ui_table_call(ctx, sig, args)?));
+        }
     }
     // perry/updater dispatch: same shape as perry/system. Imports from
     // `perry/updater` arrive as ExternFuncRef; route by name to the
     // perry_updater_* runtime symbols in `perry-updater`.
-    if let Some(sig) = perry_updater_table_lookup(name) {
-        return Ok(Some(lower_perry_ui_table_call(ctx, sig, args)?));
+    if callee_is_from_perry_module(ctx, name, "perry/updater") {
+        if let Some(sig) = perry_updater_table_lookup(name) {
+            return Ok(Some(lower_perry_ui_table_call(ctx, sig, args)?));
+        }
     }
     // perry/background dispatch (issue #538): registerTask / schedule /
     // cancel from `perry/background`. Backed by perry_background_* in
     // libperry_ui_*.a (real impls on iOS + Android, no-op stubs
     // elsewhere). Same calling convention as perry/system.
-    if let Some(sig) = perry_background_table_lookup(name) {
-        return Ok(Some(lower_perry_ui_table_call(ctx, sig, args)?));
+    if callee_is_from_perry_module(ctx, name, "perry/background") {
+        if let Some(sig) = perry_background_table_lookup(name) {
+            return Ok(Some(lower_perry_ui_table_call(ctx, sig, args)?));
+        }
     }
     // Built-in runtime extern functions (`js_weakmap_set`,
     // `js_regexp_exec`, etc.) that start with `js_` are resolved
